@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useFinanceConfig } from "@/hooks/useFinanceConfig";
 import { useAcademicCalendar } from "@/hooks/useAcademicCalendar";
-import { getArchiveRecords, getArchiveSummary } from "@/lib/archives.functions";
+import { exportArchiveRecords, getArchiveRecords, getArchiveSummary } from "@/lib/archives.functions";
+import { toast } from "sonner";
 import { ARCHIVE_STATE_LABEL, getArchiveSource, type ArchiveState } from "@/lib/archives";
 import { downloadCsv } from "@/lib/user-management";
 
@@ -23,6 +24,8 @@ const STATE_VARIANT: Record<ArchiveState, "default" | "secondary" | "destructive
 export function ArchivesManagement() {
   const summaryFn = useServerFn(getArchiveSummary);
   const recordsFn = useServerFn(getArchiveRecords);
+  const exportFn = useServerFn(exportArchiveRecords);
+  const [exporting, setExporting] = useState(false);
   const { money } = useFinanceConfig();
   const cal = useAcademicCalendar();
 
@@ -75,16 +78,34 @@ export function ArchivesManagement() {
     return c.money ? money(Number(v)) : String(v);
   };
 
-  const exportCsv = () =>
-    downloadCsv(
-      `archive-${source}${year !== ALL ? `-${year.replace("/", "-")}` : ""}.csv`,
-      rows.map((r) => ({
+  // Export runs on the server: Export Controls authorize it, Data Access limits the rows, and it is audited.
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const out = await exportFn({
+        data: {
+          source, state, page: 1, pageSize: 50,
+          ...(year !== ALL ? { year } : {}),
+          ...(period !== ALL ? { period } : {}),
+          ...(dateFrom ? { dateFrom } : {}),
+          ...(dateTo ? { dateTo } : {}),
+        },
+      });
+      const body = out.rows.map((r) => ({
         Date: r.date,
         "Academic year": r.year,
-        State: ARCHIVE_STATE_LABEL[r.state],
+        State: ARCHIVE_STATE_LABEL[r.state as ArchiveState],
         ...Object.fromEntries(def.columns.map((c) => [c.label, cell(r.cells, c)])),
-      })),
-    );
+      }));
+      if (out.watermark) body.unshift({ Date: out.watermark } as any);
+      downloadCsv(`archive-${source}${year !== ALL ? `-${year.replace("/", "-")}` : ""}.csv`, body);
+      if (out.truncated) toast.warning("Export stopped at the scan limit; narrow the filters for older records.");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -228,7 +249,7 @@ export function ArchivesManagement() {
             >
               Clear
             </Button>
-            <Button variant="outline" className="flex-1" onClick={exportCsv} disabled={rows.length === 0}>
+            <Button variant="outline" className="flex-1" onClick={exportCsv} disabled={rows.length === 0 || exporting || !summary.data?.canExport} title={summary.data?.canExport ? undefined : "Export Controls do not allow your role to export"}>
               <Download className="size-4" aria-hidden /> Export CSV
             </Button>
           </div>
