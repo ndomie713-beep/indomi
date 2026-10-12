@@ -1,3 +1,4 @@
+import { Pager, usePaged } from "@/components/portal/Paged";
 import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -174,6 +175,8 @@ export function AdmissionsManagement() {
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
+  const page = usePaged(filtered, 25);
+
   if (loading) {
     return (
       <div className="surface flex items-center gap-3 p-6 text-sm text-muted-foreground">
@@ -257,7 +260,7 @@ export function AdmissionsManagement() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {page.items.map((r) => (
                 <tr key={String(r["id"])} className="border-b border-border/60">
                   <td className="p-3 font-mono text-xs">{String(r["admission_number"] ?? "")}</td>
                   <td className="p-3 font-medium">{String(r["student_name"] ?? "")}</td>
@@ -306,6 +309,7 @@ export function AdmissionsManagement() {
               )}
             </tbody>
           </table>
+          <div className="px-4 pb-3"><Pager {...page} /></div>
         </div>
       </TabsContent>
 

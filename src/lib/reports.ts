@@ -1,23 +1,7 @@
 import { periodOfLabel } from "@/lib/academic-calendar";
 /** Termly report card rules — shared by the server builder and the screen. */
 
-export const GRADE_SCALE = [
-  { min: 90, grade: "A+", level: "Excellent" },
-  { min: 80, grade: "A", level: "Very Good" },
-  { min: 70, grade: "B+", level: "Good" },
-  { min: 60, grade: "B", level: "Fair" },
-  { min: 50, grade: "C", level: "Average" },
-  { min: 40, grade: "D", level: "Poor" },
-  { min: 0, grade: "F", level: "Fail" },
-] as const;
-
-export function gradeFor(total: number) {
-  return GRADE_SCALE.find((g) => total >= g.min) ?? GRADE_SCALE[6];
-}
-
-/** Class work and exams each carry 50% of the subject total. */
-export const CLASS_WEIGHT = 50;
-export const EXAM_WEIGHT = 50;
+/* Grade bands, weights and assessment categories live in academic-rules.ts. */
 
 /** Competition ranking: equal scores share a position (1, 2, 2, 4). */
 export function rankOf(score: number, all: number[]) {

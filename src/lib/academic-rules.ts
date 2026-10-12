@@ -34,9 +34,32 @@ const bandSchema = z.object({
 });
 export type GradeBand = z.infer<typeof bandSchema>;
 
+/** How an assessment type counts towards the subject total. */
+export const ASSESSMENT_CATEGORIES = ["class", "exam"] as const;
+export type AssessmentCategory = (typeof ASSESSMENT_CATEGORIES)[number];
+export const CATEGORY_LABEL: Record<AssessmentCategory, string> = { class: "Class work", exam: "Exam" };
+
+const assessmentTypeSchema = z.object({
+  name: z.string().trim().min(1).max(40),
+  category: z.enum(ASSESSMENT_CATEGORIES),
+  active: z.boolean().default(true),
+});
+export type AssessmentTypeRule = z.infer<typeof assessmentTypeSchema>;
+
+export const DEFAULT_ASSESSMENT_TYPES: AssessmentTypeRule[] = [
+  { name: "Exam", category: "exam", active: true },
+  { name: "Homework", category: "class", active: true },
+  { name: "Project", category: "class", active: true },
+  { name: "Exercise", category: "class", active: true },
+  { name: "Quiz", category: "class", active: true },
+  { name: "Assignment", category: "class", active: true },
+];
+
 export const rulesSchema = z
   .object({
     gradeBands: z.array(bandSchema).max(20),
+    /** Assessment types offered by Assessment and weighted by Termly Reports. */
+    assessmentTypes: z.array(assessmentTypeSchema).max(30).default(DEFAULT_ASSESSMENT_TYPES.map((t) => ({ ...t }))),
     assessment: z.array(ruleSchema).max(30),
     attendance: z.array(ruleSchema).max(30),
     timetable: z.array(ruleSchema).max(30),
@@ -46,6 +69,9 @@ export const rulesSchema = z
   })
   .refine((r) => new Set(r.gradeBands.map((b) => b.min)).size === r.gradeBands.length, {
     message: "Two grade bands share the same minimum score",
+  })
+  .refine((r) => new Set(r.assessmentTypes.map((t) => t.name.toLowerCase())).size === r.assessmentTypes.length, {
+    message: "Two assessment types share the same name",
   })
   .refine(
     (r) => {
@@ -98,6 +124,7 @@ export const DEFAULT_RULES: Record<RuleSection, AcademicRule[]> = {
 export function defaultRules(): AcademicRules {
   return {
     gradeBands: DEFAULT_GRADE_BANDS.map((b) => ({ ...b })),
+    assessmentTypes: DEFAULT_ASSESSMENT_TYPES.map((t) => ({ ...t })),
     assessment: DEFAULT_RULES.assessment.map((r) => ({ ...r })),
     attendance: DEFAULT_RULES.attendance.map((r) => ({ ...r })),
     timetable: DEFAULT_RULES.timetable.map((r) => ({ ...r })),
@@ -154,4 +181,23 @@ export function attendanceBackdateReason(r: AcademicRules, date: string, today =
 /** Defaults missing from a section (so a deleted rule can be restored). */
 export function missingDefaults(r: AcademicRules, section: RuleSection) {
   return DEFAULT_RULES[section].filter((d) => !r[section].some((x) => x.key === d.key));
+}
+
+/** Assessment types a teacher may pick (active only, configured order). */
+export function activeAssessmentTypes(r: Pick<AcademicRules, "assessmentTypes">) {
+  return r.assessmentTypes.filter((t) => t.active).map((t) => t.name);
+}
+
+/**
+ * Category of a recorded assessment type. Unknown/removed types fall back to
+ * "exam" only when literally named "Exam", so historic rows keep weighting.
+ */
+export function categoryOf(r: Pick<AcademicRules, "assessmentTypes">, type: string): AssessmentCategory {
+  const t = r.assessmentTypes.find((x) => x.name.toLowerCase() === type.trim().toLowerCase());
+  return t ? t.category : type.trim().toLowerCase() === "exam" ? "exam" : "class";
+}
+
+/** Score as a percentage of its maximum. */
+export function percentOf(score: number, outOf: number) {
+  return outOf > 0 ? (score / outOf) * 100 : 0;
 }

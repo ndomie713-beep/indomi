@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Printer } from "lucide-react";
@@ -40,6 +40,10 @@ export function TermlyReports() {
     enabled: !!admissionId && !!term,
   });
   const r = report.data;
+  // "Next term begins" comes from the following period in the academic calendar.
+  useEffect(() => {
+    setExtra((x) => ({ ...x, nextTerm: r?.nextPeriod?.start ?? "" }));
+  }, [r?.nextPeriod?.start, admissionId, term]);
 
   return (
     <div className="space-y-6">
@@ -86,8 +90,16 @@ export function TermlyReports() {
             <Field label="Number on roll" value={String(r.numberOnRoll)} />
             {r.rules.showPosition && <Field label="Position" value={r.position ? ordinal(r.position) : "—"} />}
             <div>
-              <Label htmlFor="rc-next">Next {cal.labels.singular.toLowerCase()} begins</Label>
+              <Label htmlFor="rc-next">
+                Next {cal.labels.singular.toLowerCase()} begins
+                {r.nextPeriod ? ` (${r.nextPeriod.name})` : ""}
+              </Label>
               <Input id="rc-next" type="date" value={extra.nextTerm} onChange={set("nextTerm")} />
+              {!r.nextPeriod && (
+                <p className="mt-1 text-xs text-muted-foreground print:hidden">
+                  No following {cal.labels.singular.toLowerCase()} in the academic calendar yet — add it in Academic Configuration or enter the date.
+                </p>
+              )}
             </div>
           </dl>
 

@@ -1,9 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { CALENDAR_FEATURE_KEY, findPeriod, parseCalendar } from "@/lib/academic-calendar";
+import { CALENDAR_FEATURE_KEY, findPeriod, nextPeriod, parseCalendar } from "@/lib/academic-calendar";
+import { isAttended } from "@/lib/student-summary";
 import { buildBill, rankOf } from "@/lib/reports";
-import { RULES_FEATURE_KEY, assessmentWeights, flag, gradeFromBands, num, parseRules } from "@/lib/academic-rules";
+import { RULES_FEATURE_KEY, assessmentWeights, categoryOf, flag, gradeFromBands, num, parseRules, percentOf } from "@/lib/academic-rules";
 
 const STAFF_ROLES = ["super_admin", "school_manager", "staff"];
 
@@ -83,10 +84,10 @@ export const getTermlyReport = createServerFn({ method: "GET" })
     // Per student, per subject: average % for class work and for exams, scaled to weights.
     const acc = new Map<string, Map<string, { c: number[]; e: number[] }>>();
     for (const r of assess.data ?? []) {
-      const pct = Number(r.out_of) > 0 ? (Number(r.score) / Number(r.out_of)) * 100 : 0;
+      const pct = percentOf(Number(r.score), Number(r.out_of));
       const bySub = acc.get(r.admission_id) ?? new Map();
       const cell = bySub.get(r.subject) ?? { c: [], e: [] };
-      (r.assessment_type === "Exam" ? cell.e : cell.c).push(pct);
+      (categoryOf(rules, r.assessment_type) === "exam" ? cell.e : cell.c).push(pct);
       bySub.set(r.subject, cell);
       acc.set(r.admission_id, bySub);
     }
@@ -130,7 +131,9 @@ export const getTermlyReport = createServerFn({ method: "GET" })
       .sort();
     // Prefer the configured calendar's date range; fall back to the score dates.
     const rawCal = (ts?.features as Record<string, unknown> | null)?.[CALENDAR_FEATURE_KEY];
-    const period = rawCal ? findPeriod(parseCalendar(rawCal), data.term) : null;
+    const cal = rawCal ? parseCalendar(rawCal) : null;
+    const period = cal ? findPeriod(cal, data.term) : null;
+    const next = cal ? nextPeriod(cal, data.term) : null;
     const termStart = period?.start ?? dates[0]?.slice(0, 10);
     const termEnd = period?.end ?? dates[dates.length - 1]?.slice(0, 10);
     const att = (attendance.data ?? []).filter(
@@ -145,8 +148,10 @@ export const getTermlyReport = createServerFn({ method: "GET" })
       subjects,
       position: subjects.length ? rankOf(myOverall, overall) : null,
       numberOnRoll: classIds.length,
+      /** Start of the following term/semester from the academic calendar. */
+      nextPeriod: next ? { name: next.name, start: next.start } : null,
       attendance: {
-        present: att.filter((a) => a.status === "Present" || a.status === "Late").length,
+        present: att.filter((a) => isAttended(a.status)).length,
         total: att.length,
       },
       bill: fees.error ? null : buildBill(fees.data ?? [], data.term),

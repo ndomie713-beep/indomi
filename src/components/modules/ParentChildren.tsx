@@ -15,6 +15,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { getChildDetail, getMyChildren } from "@/lib/admissions.functions";
 import { useFinanceConfig } from "@/hooks/useFinanceConfig";
+import { useAcademicCalendar } from "@/hooks/useAcademicCalendar";
+import { Pager, usePaged } from "@/components/portal/Paged";
 
 type Row = Record<string, unknown>;
 const s = (v: unknown) => (v == null ? "" : String(v));
@@ -138,22 +140,40 @@ function Line({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ChildDetail({ detail }: { detail: Awaited<ReturnType<typeof getChildDetail>> }) {
+type Detail = Awaited<ReturnType<typeof getChildDetail>>;
+
+function ChildDetail({ detail }: { detail: Detail }) {
   const { money } = useFinanceConfig();
+  const cal = useAcademicCalendar();
   const a = detail.admission as Row;
   const teacher = detail.teacher as Row | null;
   const fees = detail.fees as Row[];
-  const attendance = detail.attendance as Row[];
-  const performance = detail.performance as Row[];
   const exeat = (detail.exeat as Row[])[0] ?? null;
+  const { scores, attendanceSummary } = detail;
 
   const due = fees.reduce((t, f) => t + Number(f["amount_due"] ?? 0), 0);
   const paid = fees.reduce((t, f) => t + Number(f["amount_paid"] ?? 0), 0);
-  const present = attendance.filter((r) => r["status"] === "present").length;
-  const rate = attendance.length ? Math.round((present / attendance.length) * 100) : 0;
-  const average = performance.length
-    ? Math.round(performance.reduce((t, p) => t + Number(p["score"] ?? 0), 0) / performance.length)
-    : 0;
+  const rate = attendanceSummary.overall.rate;
+
+  // Default every section to the current period; parents can switch periods.
+  const termNames = scores.terms.map((t) => t.term);
+  const [scoreTerm, setScoreTerm] = useState("");
+  const activeTerm = scoreTerm || (termNames.includes(cal.current?.name ?? "") ? cal.current!.name : termNames[0] ?? "");
+  const termSummary = scores.terms.find((t) => t.term === activeTerm);
+  const termRows = detail.performance.filter((p) => p.term === activeTerm);
+  const scorePage = usePaged(termRows, 10);
+
+  const periodNames = attendanceSummary.periods.map((p) => p.period);
+  const [attPeriod, setAttPeriod] = useState("");
+  const activePeriod = attPeriod || (periodNames.includes(cal.current?.name ?? "") ? cal.current!.name : periodNames[0] ?? "");
+  const tally = attendanceSummary.periods.find((p) => p.period === activePeriod);
+  const attRows = (detail.attendance as Row[]).filter((r) => {
+    const d = s(r["attendance_date"]);
+    return tally?.start && tally.end ? d >= tally.start && d <= tally.end : true;
+  });
+  const attPage = usePaged(attRows, 10);
+  const [showDays, setShowDays] = useState(false);
+  const feePage = usePaged(fees, 10);
 
   return (
     <div className="space-y-4">
@@ -176,8 +196,8 @@ function ChildDetail({ detail }: { detail: Awaited<ReturnType<typeof getChildDet
       </header>
 
       <div className="grid gap-4 sm:grid-cols-4">
-        <Stat icon={TrendingUp} label="Average score" value={`${average}%`} />
-        <Stat icon={CalendarCheck} label="Attendance" value={`${rate}%`} />
+        <Stat icon={TrendingUp} label="Average score" value={scores.average === null ? "—" : `${scores.average}%`} hint={`${scores.count} assessment(s)`} />
+        <Stat icon={CalendarCheck} label="Attendance" value={rate === null ? "—" : `${rate}%`} hint={`${attendanceSummary.overall.present + attendanceSummary.overall.late} of ${attendanceSummary.overall.total} days`} />
         <Stat icon={Receipt} label="Fees outstanding" value={money(due - paid)} />
         <Stat
           icon={DoorOpen}
@@ -190,45 +210,86 @@ function ChildDetail({ detail }: { detail: Awaited<ReturnType<typeof getChildDet
         <h3 className="mb-3 font-semibold">Exeat / permission status</h3>
         {exeat ? (
           <dl className="grid gap-3 sm:grid-cols-2">
-            <Detail
-              label="Status"
-              value={exeat["status"] === "out" ? "Temporarily permitted out" : "In school"}
-            />
-            <Detail label="Signed by" value={s(exeat["signed_by_name"])} />
-            <Detail label="Reason" value={s(exeat["reason"])} />
-            <Detail label="Destination" value={s(exeat["destination"])} />
-            <Detail label="Departed" value={fmt(exeat["departed_at"])} />
-            <Detail label="Allowed return" value={fmt(exeat["return_at"])} />
-            <Detail label="Returned" value={fmt(exeat["returned_at"])} />
+            <DetailItem label="Status" value={exeat["status"] === "out" ? "Temporarily permitted out" : "In school"} />
+            <DetailItem label="Signed by" value={s(exeat["signed_by_name"])} />
+            <DetailItem label="Reason" value={s(exeat["reason"])} />
+            <DetailItem label="Destination" value={s(exeat["destination"])} />
+            <DetailItem label="Departed" value={fmt(exeat["departed_at"])} />
+            <DetailItem label="Allowed return" value={fmt(exeat["return_at"])} />
+            <DetailItem label="Returned" value={fmt(exeat["returned_at"])} />
           </dl>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            In school — no exeat has been issued for this child.
-          </p>
+          <p className="text-sm text-muted-foreground">In school — no exeat has been issued for this child.</p>
         )}
       </section>
 
-      <section className="surface p-5">
-        <h3 className="mb-3 font-semibold">Performance & assessment records</h3>
-        <Table
-          head={["Term", "Subject", "Type", "Score", "Grade", "Remarks"]}
-          rows={performance.map((p) => [
-            s(p["term"]),
-            s(p["subject"]),
-            s(p["assessment_type"]),
-            s(p["score"]),
-            s(p["grade"]),
-            s(p["remarks"]),
-          ])}
-          empty="No assessment records published yet."
-        />
+      <section className="surface space-y-4 p-5">
+        <SectionHead title="Performance & assessment" label={cal.labels.singular} value={activeTerm} options={termNames} onChange={setScoreTerm} />
+        {termSummary ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {activeTerm} average: <span className="font-semibold text-foreground">{termSummary.average ?? "—"}%</span>
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {termSummary.subjects.map((x) => (
+                <div key={x.subject} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="font-medium">{x.subject}</span>
+                    <span className="text-muted-foreground">{x.average}% · {x.count}</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(x.average, 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Table
+              head={["Subject", "Type", "Score", "Grade", "Remarks"]}
+              rows={scorePage.items.map((p) => [p.subject, p.type, `${p.score}/${p.outOf}`, p.grade, p.remark])}
+              empty="No assessments in this period."
+            />
+            <Pager {...scorePage} />
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">No assessment records published yet.</p>
+        )}
+      </section>
+
+      <section className="surface space-y-4 p-5">
+        <SectionHead title="Attendance" label={cal.labels.singular} value={activePeriod} options={periodNames} onChange={setAttPeriod} />
+        {tally ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-5">
+              <DetailItem label="Attendance rate" value={tally.rate === null ? "—" : `${tally.rate}%`} />
+              <DetailItem label="Present" value={String(tally.present)} />
+              <DetailItem label="Late" value={String(tally.late)} />
+              <DetailItem label="Absent" value={String(tally.absent)} />
+              <DetailItem label="Excused" value={String(tally.excused)} />
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setShowDays((v) => !v)}>
+              {showDays ? "Hide daily register" : `Show daily register (${attRows.length} days)`}
+            </Button>
+            {showDays && (
+              <>
+                <Table
+                  head={["Date", "Status", "Note"]}
+                  rows={attPage.items.map((r) => [s(r["attendance_date"]), s(r["status"]), s(r["note"])])}
+                  empty="No attendance in this period."
+                />
+                <Pager {...attPage} />
+              </>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">No attendance has been recorded yet.</p>
+        )}
       </section>
 
       <section className="surface p-5">
         <h3 className="mb-3 font-semibold">Fees payment status</h3>
         <Table
           head={["Term", "Due", "Paid", "Balance", "Status"]}
-          rows={fees.map((f) => [
+          rows={feePage.items.map((f) => [
             s(f["term"]),
             money(Number(f["amount_due"] ?? 0)),
             money(Number(f["amount_paid"] ?? 0)),
@@ -237,18 +298,21 @@ function ChildDetail({ detail }: { detail: Awaited<ReturnType<typeof getChildDet
           ])}
           empty="No fee records yet."
         />
+        <Pager {...feePage} />
       </section>
+    </div>
+  );
+}
 
-      <section className="surface p-5">
-        <h3 className="mb-3 font-semibold">Attendance report</h3>
-        <Table
-          head={["Date", "Status", "Note"]}
-          rows={attendance
-            .slice(0, 30)
-            .map((r) => [s(r["attendance_date"]), s(r["status"]), s(r["note"])])}
-          empty="No attendance has been recorded yet."
-        />
-      </section>
+function SectionHead({ title, label, value, options, onChange }: { title: string; label: string; value: string; options: string[]; onChange: (v: string) => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className="font-semibold">{title}</h3>
+      {options.length > 0 && (
+        <select aria-label={label} className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>
+          {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )}
     </div>
   );
 }
@@ -259,7 +323,7 @@ function fmt(v: unknown) {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function DetailItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border bg-muted/40 p-3">
       <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -274,10 +338,12 @@ function Stat({
   icon: Icon,
   label,
   value,
+  hint,
 }: {
   icon: typeof TrendingUp;
   label: string;
   value: string;
+  hint?: string;
 }) {
   return (
     <div className="surface flex items-center gap-3 p-5">
@@ -289,6 +355,7 @@ function Stat({
           {label}
         </p>
         <p className="text-lg font-bold">{value}</p>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       </div>
     </div>
   );
