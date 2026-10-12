@@ -137,6 +137,13 @@ export function findPeriod(cal: AcademicCalendar, name: string) {
   return cal.periods.find((p) => p.name.toLowerCase() === n) ?? null;
 }
 
+/** The period that follows `name` in date order, or null when it is the last one. */
+export function nextPeriod(cal: AcademicCalendar, name: string) {
+  const sorted = [...cal.periods].sort((a, b) => a.start.localeCompare(b.start));
+  const i = sorted.findIndex((p) => p.name.toLowerCase() === name.trim().toLowerCase());
+  return i >= 0 ? sorted[i + 1] ?? null : null;
+}
+
 /**
  * Why a write against a period (by name) or a date is refused, or null if allowed.
  * Unknown period names are allowed so historic records keep working.
