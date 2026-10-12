@@ -274,7 +274,7 @@ export const MODULES: ModuleDef[] = [
     description: "Historical records and retention.",
     icon: Archive,
     category: "Administration",
-    roles: ["super_admin"],
+    roles: ["super_admin", "school_manager"],
   },
   {
     id: "user-verification",

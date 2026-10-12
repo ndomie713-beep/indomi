@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { resolveProvisionedSchool } from "@/lib/school.server";
 import { assertPeriodOpen } from "@/lib/academic-calendar.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
@@ -718,13 +719,7 @@ export const getPortalOverview = createServerFn({ method: "GET" })
 
     const [{ data: settings }, { data: school }, { data: branding }] = await Promise.all([
       context.supabase.from("security_settings").select("session_timeout").maybeSingle(),
-      context.supabase
-        .from("schools")
-        .select("id, name")
-        .eq("active", true)
-        .order("created_at")
-        .limit(1)
-        .maybeSingle(),
+      resolveProvisionedSchool(context.supabase).then((data) => ({ data })),
       context.supabase.from("school_branding").select("school_id, display_name, tagline"),
     ]);
     const brand = (branding ?? []).find((b) => b.school_id === school?.id);
