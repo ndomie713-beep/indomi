@@ -361,7 +361,6 @@ export function AssessmentManagement() {
                 value={form.outOf}
                 placeholder={defaultOutOf !== null ? String(defaultOutOf) : undefined}
                 onChange={(e) => setForm({ ...form, outOf: e.target.value })}
-                required
               />
             </Field>
             <Field label="Remark">
