@@ -365,7 +365,7 @@ export const getChildDetail = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (!admission) throw new Error("Record not found.");
 
-    const [performance, attendance, fees, exeat, teacher] = await Promise.all([
+    const [performance, attendance, fees, exeat, teacher, assessments] = await Promise.all([
       supabase
         .from("student_performance")
         .select("*")
@@ -376,7 +376,7 @@ export const getChildDetail = createServerFn({ method: "POST" })
         .select("*")
         .eq("admission_id", data.id)
         .order("attendance_date", { ascending: false })
-        .limit(120),
+        .limit(5000),
       supabase.from("student_fees").select("*").eq("admission_id", data.id).order("term"),
       supabase
         .from("student_exeat")
@@ -389,13 +389,38 @@ export const getChildDetail = createServerFn({ method: "POST" })
         .select("*")
         .eq("class_name", admission.class_admitted)
         .maybeSingle(),
+      supabase
+        .from("student_assessments")
+        .select("term, subject, assessment_type, score, out_of, remark, created_at")
+        .eq("admission_id", data.id)
+        .order("created_at", { ascending: false })
+        .limit(5000),
     ]);
+
+    const { loadCalendar, loadRules } = await import("@/lib/academic-calendar.server");
+    const { summariseAttendance, summariseScores } = await import("@/lib/student-summary");
+    const { gradeFromBands, percentOf } = await import("@/lib/academic-rules");
+    const [cal, rules] = await Promise.all([loadCalendar(supabase), loadRules(supabase)]);
+    // Scores: Assessment records are the source; legacy performance rows (score out of 100) are kept.
+    const scoreRows = [
+      ...(assessments.data ?? []).map((r) => ({
+        term: r.term, subject: r.subject, type: r.assessment_type, score: Number(r.score), outOf: Number(r.out_of),
+        remark: r.remark ?? "", date: r.created_at,
+      })),
+      ...(performance.data ?? []).map((r) => ({
+        term: r.term, subject: r.subject, type: r.assessment_type, score: Number(r.score), outOf: 100,
+        remark: r.remarks ?? "", date: r.recorded_at,
+      })),
+    ].map((r) => ({ ...r, grade: gradeFromBands(rules.gradeBands, percentOf(r.score, r.outOf)).grade }));
+    const attendanceRows = (attendance.data ?? []) as { attendance_date: string; status: string; note: string }[];
 
     return {
       admission,
       teacher: teacher.data ?? null,
-      performance: performance.data ?? [],
-      attendance: attendance.data ?? [],
+      performance: scoreRows,
+      scores: summariseScores(scoreRows),
+      attendanceSummary: summariseAttendance(attendanceRows, cal),
+      attendance: attendanceRows.slice(0, 500),
       fees: fees.data ?? [],
       exeat: exeat.data ?? [],
     };
