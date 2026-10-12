@@ -15,7 +15,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAcademicCalendar } from "@/hooks/useAcademicCalendar";
 import { PeriodSelect } from "@/components/portal/PeriodFields";
-import { ASSESSMENT_TYPES, type AssessmentType } from "@/lib/assessment.schemas";
+import { useAcademicRules } from "@/hooks/useAcademicRules";
+import { useSchoolClasses } from "@/hooks/useSchoolClasses";
+import { useSubjectOptions } from "@/hooks/useSubjectOptions";
+import { activeAssessmentTypes, categoryOf, CATEGORY_LABEL, num, percentOf } from "@/lib/academic-rules";
+import { getMyTeachingScope } from "@/lib/teaching.functions";
+import { Pager, usePaged } from "@/components/portal/Paged";
 import {
   deleteAssessment,
   getAssessmentStudents,
@@ -53,13 +58,13 @@ const emptyForm = {
   className: "",
   term: "",
   subject: "",
-  assessmentType: "Exam" as AssessmentType,
+  assessmentType: "",
   score: "",
   outOf: "",
   remark: "",
 };
 
-const pct = (score: number, outOf: number) => (outOf > 0 ? (score / outOf) * 100 : 0);
+const pct = percentOf;
 
 export function AssessmentManagement() {
   const loadStudents = useServerFn(getAssessmentStudents);
@@ -67,6 +72,12 @@ export function AssessmentManagement() {
   const save = useServerFn(saveAssessment);
   const remove = useServerFn(deleteAssessment);
 
+  const loadScope = useServerFn(getMyTeachingScope);
+  const rules = useAcademicRules();
+  const types = activeAssessmentTypes(rules);
+  const { names: allClasses } = useSchoolClasses();
+  const { subjects: allSubjects } = useSubjectOptions();
+  const [scope, setScope] = useState<Awaited<ReturnType<typeof getMyTeachingScope>> | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [rows, setRows] = useState<AssessmentRow[]>([]);
   const cal = useAcademicCalendar();
@@ -90,6 +101,7 @@ export function AssessmentManagement() {
   useEffect(() => {
     void (async () => {
       try {
+        setScope(await loadScope());
         setStudents((await loadStudents()) as StudentRow[]);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not load students.");
@@ -98,6 +110,15 @@ export function AssessmentManagement() {
       setLoading(false);
     })();
   }, []);
+
+  // Teachers pick only from their assigned classes, and subjects they teach in that class.
+  const classOptions = scope && !scope.isAdmin ? scope.classes : allClasses;
+  const subjectOptions =
+    scope && !scope.isAdmin
+      ? [...new Set(scope.pairs.filter((p) => !form.className || p.class_name === form.className).map((p) => p.subject))]
+      : allSubjects;
+  const classStudents = form.className ? students.filter((s) => s.class_admitted === form.className) : students;
+  const defaultOutOf = num(rules, "assessment", "default-out-of");
 
   const selectedStudent = students.find((s) => s.id === form.admissionId) ?? null;
 
@@ -131,7 +152,10 @@ export function AssessmentManagement() {
 
   const onPickStudent = (id: string) => {
     const student = students.find((s) => s.id === id);
-    setForm((f) => ({ ...f, admissionId: id, className: student?.class_admitted ?? f.className }));
+    setForm((f) => {
+      const className = student?.class_admitted ?? f.className;
+      return { ...f, admissionId: id, className, subject: className === f.className ? f.subject : "" };
+    });
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -149,9 +173,9 @@ export function AssessmentManagement() {
           className: form.className,
           term: form.term || cal.current?.name || "",
           subject: form.subject,
-          assessmentType: form.assessmentType,
+          assessmentType: form.assessmentType || types[0] || "",
           score: Number(form.score),
-          outOf: Number(form.outOf),
+          outOf: Number(form.outOf || defaultOutOf || 0),
           remark: form.remark,
         },
       });
@@ -172,9 +196,7 @@ export function AssessmentManagement() {
       className: row.className,
       term: row.term,
       subject: row.subject,
-      assessmentType: (ASSESSMENT_TYPES as readonly string[]).includes(row.assessmentType)
-        ? (row.assessmentType as AssessmentType)
-        : "Exam",
+      assessmentType: row.assessmentType,
       score: String(row.score),
       outOf: String(row.outOf),
       remark: row.remark,
@@ -224,6 +246,17 @@ export function AssessmentManagement() {
     URL.revokeObjectURL(url);
   };
 
+  const paged = usePaged(filtered, 25);
+
+  if (scope && !scope.isAdmin && scope.pairs.length === 0 && !loading) {
+    return (
+      <div className="surface p-6 text-sm text-muted-foreground">
+        You have no teaching assignments yet. An administrator assigns the classes and subjects you teach in
+        User Management or Staff Management.
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="surface flex items-center gap-2 p-6 text-sm text-muted-foreground">
@@ -261,7 +294,7 @@ export function AssessmentManagement() {
                   <SelectValue placeholder="Select student" />
                 </SelectTrigger>
                 <SelectContent>
-                  {students.map((s) => (
+                  {classStudents.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.student_name}
                       {s.admission_number ? ` (${s.admission_number})` : ""}
@@ -271,36 +304,40 @@ export function AssessmentManagement() {
               </Select>
             </div>
             <Field label="Class">
-              <Input
+              <Select
                 value={form.className}
-                onChange={(e) => setForm({ ...form, className: e.target.value })}
-                placeholder="Class"
-              />
+                onValueChange={(v) => setForm({ ...form, className: v, admissionId: "", subject: "" })}
+              >
+                <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
+                <SelectContent>
+                  {classOptions.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </Field>
             <Field label={cal.labels.singular}>
               <PeriodSelect value={form.term} onChange={(v) => setForm({ ...form, term: v })} />
             </Field>
             <Field label="Subject">
-              <Input
-                value={form.subject}
-                onChange={(e) => setForm({ ...form, subject: e.target.value })}
-                placeholder="Mathematics"
-                required
-              />
+              <Select value={form.subject} onValueChange={(v) => setForm({ ...form, subject: v })}>
+                <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                <SelectContent>
+                  {subjectOptions.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </Field>
             <div className="space-y-1.5">
               <Label>Type</Label>
               <Select
-                value={form.assessmentType}
-                onValueChange={(v) => setForm({ ...form, assessmentType: v as AssessmentType })}
+                value={form.assessmentType || types[0] || ""}
+                onValueChange={(v) => setForm({ ...form, assessmentType: v })}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Select type" />
                 </SelectTrigger>
                 <SelectContent>
-                  {ASSESSMENT_TYPES.map((t) => (
+                  {[...new Set([...types, ...(form.assessmentType ? [form.assessmentType] : [])])].map((t) => (
                     <SelectItem key={t} value={t}>
-                      {t}
+                      {t} · {CATEGORY_LABEL[categoryOf(rules, t)]}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -322,6 +359,7 @@ export function AssessmentManagement() {
                 min="1"
                 step="0.01"
                 value={form.outOf}
+                placeholder={defaultOutOf !== null ? String(defaultOutOf) : undefined}
                 onChange={(e) => setForm({ ...form, outOf: e.target.value })}
                 required
               />
@@ -407,7 +445,7 @@ export function AssessmentManagement() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {paged.items.map((r) => (
                   <tr key={r.id} className="border-b border-border/60">
                     <td className="p-2 font-medium">{r.studentName}</td>
                     <td className="p-2">{r.className || "—"}</td>
@@ -445,6 +483,7 @@ export function AssessmentManagement() {
               </tbody>
             </table>
           </div>
+          <Pager {...paged} />
         </section>
       </TabsContent>
 
