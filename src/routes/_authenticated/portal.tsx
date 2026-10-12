@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { DEFAULT_SCHOOL_NAME } from "@/hooks/useSchoolName";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -98,7 +99,7 @@ function PortalLayout() {
           </Button>
           <Link to="/portal" className="flex items-center gap-2.5">
             <School className="size-6" aria-hidden />
-            <span className="text-lg font-semibold">{overview?.schoolName || "School Management Portal"}</span>
+            <span className="text-lg font-semibold">{overview?.schoolName || DEFAULT_SCHOOL_NAME}</span>
           </Link>
           <div className="ml-auto flex items-center gap-4">
             <div className="hidden text-right sm:block">

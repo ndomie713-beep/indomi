@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { resolveProvisionedSchool } from "@/lib/school.server";
 import type { Json } from "@/integrations/supabase/types";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertSuperAdmin, isSuperAdmin } from "@/lib/admin.server";
@@ -112,13 +113,7 @@ export const getActiveFinanceConfig = createServerFn({ method: "GET" })
     const { supabase } = context;
     const today = new Date().toISOString().slice(0, 10);
 
-    const { data: school } = await supabase
-      .from("schools")
-      .select("id, currency, locale")
-      .order("active", { ascending: false })
-      .order("created_at")
-      .limit(1)
-      .maybeSingle();
+    const school = await resolveProvisionedSchool(supabase);
     if (!school)
       return {
         schoolId: null as string | null,

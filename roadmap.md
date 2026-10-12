@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Data Access enforcement
-- [ ] Renumber configuration areas consecutively and verify shared navigation references
-- [ ] Centralize validated record visibility and export authorization, including database restrictions and all export controls
-- [ ] Test permissions, scope isolation, lifecycle, invalid rules and export output; report hosted verification limitations
+- [x] Renumber configuration areas consecutively and verify shared navigation references
+- [x] Centralize validated record visibility and export authorization, including database restrictions and all export controls
+- [x] Test permissions, scope isolation, lifecycle, invalid rules and export output; report hosted verification limitations
 
 - [x] Port the uploaded Financial Management page into /portal/financial-management (income, expenses, student fees, payroll, reports, GHS currency)
 - [x] School provisioning (System Configuration): add District, Town/Village, Community/Area, Postal Address, GPS address fields
@@ -32,3 +32,4 @@
 - [x] Versioned, conflict-safe saves for calendar and academic rules
 - [x] Shared default brand colours, clearer load errors, calendar tests
 - [ ] Tests for finance-config rules and archive state logic
+- [x] One shared provisioned-school resolver for overview, finance and archives (school name on every portal page)

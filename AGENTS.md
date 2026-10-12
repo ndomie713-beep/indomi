@@ -22,3 +22,5 @@
 - Configuration list/rule editors are shared from src/components/portal/RuleEditors.tsx — no per-domain copies.
 - Currency is owned only by Financial Configuration (currency section); schools.currency is just the starting value set at provisioning, and every amount on screen is formatted through useFinanceConfig().money — no hardcoded currency formatters.
 - Versioned configuration areas in src/lib/finance-config.ts carry an owner page (areasOwnedBy); Financial and Reporting & Records render the same workspace filtered by owner — one storage, lifecycle and audit path, no duplicate editors.
+- Archive viewing/export authorization is evaluated only in src/lib/data-access.ts (pure) and enforced server-side in archives.functions.ts; deny by default except Super Admin — one rule engine, UI only mirrors it.
+- The provisioned school is resolved only via resolveProvisionedSchool in src/lib/school.server.ts — modules never pick their own school row.

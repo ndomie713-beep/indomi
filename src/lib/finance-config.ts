@@ -462,21 +462,25 @@ export const FINANCE_AREAS: AreaDef[] = [
   },
   {
     key: "data-access",
-    number: "15a",
+    number: "16",
     name: "Data Access",
     owner: "reporting-configuration",
     sections: [
-      rules("record-access-rules", "Record Access Rules", ["Archives", "Advanced Reporting"]),
+      {
+        ...rules("record-access-rules", "Record Access Rules", ["Archives"]),
+        description:
+          "Each rule grants roles access to archive records. Conditions: roles (e.g. school_manager), sources (* or attendance,fees), states (current,archived,disposal-due). Super Admin is never restricted; everyone else is denied unless a rule grants access.",
+      },
       settings("export-controls", "Export Controls", [
         { key: "allow_export", label: "Allow exports", type: "select", options: YES_NO },
         { key: "export_roles", label: "Roles allowed to export", type: "text", placeholder: "super_admin" },
         { key: "watermark", label: "Watermark exports", type: "select", options: YES_NO },
-      ], ["Archives", "Advanced Reporting"]),
+      ], ["Archives"]),
     ],
   },
   {
     key: "security",
-    number: "16",
+    number: "17",
     name: "Security & Compliance",
     sections: [
       list("financial-permissions", "Financial Permissions", [
@@ -484,7 +488,6 @@ export const FINANCE_AREAS: AreaDef[] = [
         { key: "capability", label: "Capability", type: "text" },
       ]),
       rules("role-restrictions", "Role Restrictions"),
-      rules("data-access-rules", "Data Access Rules"),
       settings("audit-requirements", "Audit Requirements", [
         { key: "log_reads", label: "Log record views", type: "select", options: YES_NO },
         { key: "retain_years", label: "Retain audit trail (years)", type: "number" },
@@ -494,7 +497,7 @@ export const FINANCE_AREAS: AreaDef[] = [
   },
   {
     key: "lifecycle",
-    number: "17",
+    number: "18",
     name: "Configuration Lifecycle",
     sections: [
       settings("lifecycle-policy", "Lifecycle Policy", [
@@ -508,7 +511,7 @@ export const FINANCE_AREAS: AreaDef[] = [
   },
   {
     key: "transaction-lifecycle",
-    number: "18",
+    number: "19",
     name: "Transaction Lifecycle",
     sections: [
       list("status-definitions", "Status Definitions", [
@@ -532,7 +535,7 @@ export const FINANCE_AREAS: AreaDef[] = [
   },
   {
     key: "transaction-control",
-    number: "19",
+    number: "20",
     name: "Transaction Control",
     sections: [
       rules("validation-rules", "Validation Rules"),
