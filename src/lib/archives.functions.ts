@@ -1,0 +1,199 @@
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { assertSuperAdmin, logAudit } from "@/lib/admin.server";
+import { loadCalendar } from "@/lib/academic-calendar.server";
+import { defaultCalendar } from "@/lib/academic-calendar";
+import {
+  ARCHIVE_SOURCES,
+  academicYearOf,
+  archiveStateOf,
+  getArchiveSource,
+  retentionFor,
+  valueAt,
+} from "@/lib/archives";
+
+/** Rows fetched per request when scanning (the database caps a single response at 1,000). */
+const CHUNK = 1000;
+/** Safety ceiling for full scans so one request can't run unbounded. */
+const SCAN_CAP = 100_000;
+
+/** Reads every row of an ordered query in 1,000-row chunks, up to SCAN_CAP. */
+async function scanAll(make: () => any): Promise<{ rows: Record<string, unknown>[]; capped: boolean; error: string | null }> {
+  const rows: Record<string, unknown>[] = [];
+  for (let offset = 0; offset < SCAN_CAP; offset += CHUNK) {
+    const { data, error } = await make().range(offset, offset + CHUNK - 1);
+    if (error) return { rows, capped: false, error: error.message };
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    if ((data ?? []).length < CHUNK) return { rows, capped: false, error: null };
+  }
+  return { rows, capped: true, error: null };
+}
+const MAX_PAGE_SIZE = 200;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function retentionRules(supabase: any) {
+  const { data } = await supabase
+    .from("finance_rules")
+    .select("name, active, conditions, actions, priority")
+    .eq("rule_key", "retention-policies")
+    .order("priority");
+  return (data ?? []) as Parameters<typeof retentionFor>[1];
+}
+
+/** Counts per source and state, plus the retention in force for each. */
+export const getArchiveSummary = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase } = context;
+    await assertSuperAdmin(supabase, context.userId);
+    const cal = (await loadCalendar(supabase)) ?? defaultCalendar();
+    const rules = await retentionRules(supabase);
+
+    const sources = await Promise.all(
+      ARCHIVE_SOURCES.map(async (s) => {
+        const { rows: data, error } = await scanAll(() =>
+          (supabase as any).from(s.table).select(s.dateColumn).order(s.dateColumn, { ascending: false }),
+        );
+        const retention = retentionFor(s, rules);
+        const counts = { current: 0, archived: 0, "disposal-due": 0 };
+        const years = new Set<string>();
+        for (const r of data) {
+          const d = r[s.dateColumn] as string | null;
+          if (!d) continue;
+          counts[archiveStateOf(d, cal, retention.years)] += 1;
+          years.add(academicYearOf(d, cal));
+        }
+        return {
+          key: s.key,
+          label: s.label,
+          module: s.module,
+          total: data.length,
+          counts,
+          years: [...years].sort().reverse(),
+          retention,
+          error,
+        };
+      }),
+    );
+    return { calendar: cal, sources };
+  });
+
+/** Date range [from, to] an academic-year label covers, from the calendar's year start month. */
+function yearRange(year: string, cal: ReturnType<typeof defaultCalendar>): [string, string] | null {
+  const startYear = Number(year.split("/")[0]);
+  if (!Number.isFinite(startYear)) return null;
+  const startMonth = Number(cal.periods.map((p) => p.start).sort()[0]?.slice(5, 7) ?? 9) || 9;
+  const from = `${startYear}-${String(startMonth).padStart(2, "0")}-01`;
+  const end = `${startYear + 1}-${String(startMonth).padStart(2, "0")}-01`;
+  return [from, end];
+}
+
+/** Records of one source, filtered by dates, academic year, term/semester and state, one page at a time. */
+export const getArchiveRecords = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        source: z.string().min(1).max(40),
+        year: z.string().max(20).optional(),
+        period: z.string().max(60).optional(),
+        state: z.enum(["all", "current", "archived", "disposal-due"]).default("all"),
+        dateFrom: z.string().regex(DATE_RE).optional(),
+        dateTo: z.string().regex(DATE_RE).optional(),
+        page: z.number().int().min(1).default(1),
+        pageSize: z.number().int().min(10).max(MAX_PAGE_SIZE).default(50),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    await assertSuperAdmin(supabase, context.userId);
+    const source = getArchiveSource(data.source);
+    if (!source) throw new Error("Unknown archive source.");
+    const cal = (await loadCalendar(supabase)) ?? defaultCalendar();
+    const retention = retentionFor(source, await retentionRules(supabase));
+
+    // Resolve every date-ish filter to one [from, to] range applied in the query.
+    let from = data.dateFrom ?? null;
+    let to = data.dateTo ?? null;
+    const period = data.period ? cal.periods.find((p) => p.name === data.period) : null;
+    if (period) {
+      from = from && from > period.start ? from : period.start;
+      to = to && to < period.end ? to : period.end;
+    }
+    if (data.year) {
+      const yr = yearRange(data.year, cal);
+      if (yr) {
+        from = from && from > yr[0] ? from : yr[0];
+        to = to && to < yr[1] ? to : yr[1];
+      }
+    }
+
+    const toRecord = (r: Record<string, unknown>) => {
+      const date = String(r[source.dateColumn] ?? "").slice(0, 10);
+      // Flatten to plain cell values (serializable, and only the registry's columns leave the server).
+      const cells: Record<string, string | number | null> = {};
+      for (const c of source.columns) {
+        const v = valueAt(r, c.path);
+        cells[c.key] = v === null || v === undefined ? null : typeof v === "number" ? v : String(v);
+      }
+      return {
+        id: String(r["id"] ?? ""),
+        cells,
+        date,
+        year: academicYearOf(date, cal),
+        state: archiveStateOf(date, cal, retention.years),
+      };
+    };
+
+    if (from && to && from > to) throw new Error("The From date must be on or before the To date.");
+
+    const base = (withCount = false) => {
+      let q = (supabase as any)
+        .from(source.table)
+        .select(source.select, withCount ? { count: "exact" } : undefined);
+      if (from) q = q.gte(source.dateColumn, from);
+      if (to) q = q.lte(source.dateColumn, `${to}T23:59:59.999Z`);
+      return q.order(source.dateColumn, { ascending: false });
+    };
+
+    let records: ReturnType<typeof toRecord>[];
+    let total: number;
+    let truncated = false;
+
+    if (data.state === "all") {
+      // True server-side paging: the database returns exactly this page.
+      const offset = (data.page - 1) * data.pageSize;
+      const { data: rows, error, count } = await base(true).range(offset, offset + data.pageSize - 1);
+      if (error) throw new Error(error.message);
+      records = ((rows ?? []) as Record<string, unknown>[]).map(toRecord).filter((r) => r.date);
+      total = count ?? records.length;
+    } else {
+      // State is derived per record, so filter in memory over the date range, then slice the page.
+      // Scan the whole range in chunks so older records beyond the newest batch are included.
+      const { rows, capped, error } = await scanAll(() => base());
+      if (error) throw new Error(error);
+      const filtered = rows
+        .map(toRecord)
+        .filter((r) => r.date)
+        .filter((r) => r.state === data.state);
+      total = filtered.length;
+      truncated = capped;
+      records = filtered.slice((data.page - 1) * data.pageSize, data.page * data.pageSize);
+    }
+
+    await logAudit(supabase, context.userId, {
+      action: "archive_viewed",
+      description: `Viewed ${source.label} archive (page ${data.page}, ${records.length} of ${total} records)`,
+    });
+    return {
+      retention,
+      truncated,
+      records,
+      total,
+      page: data.page,
+      pageSize: data.pageSize,
+      pageCount: Math.max(1, Math.ceil(total / data.pageSize)),
+    };
+  });
