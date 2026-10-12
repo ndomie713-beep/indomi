@@ -26,3 +26,11 @@ export const getTeachingAssignments = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return rows ?? [];
   });
+
+/** The signed-in user's own teaching scope (admins: unrestricted). */
+export const getMyTeachingScope = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { loadTeachingScope } = await import("@/lib/teaching.server");
+    return loadTeachingScope(context.supabase, context.userId);
+  });
