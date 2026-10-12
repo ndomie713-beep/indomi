@@ -1,3 +1,4 @@
+import { Pager, usePaged } from "@/components/portal/Paged";
 import { PeriodDateInput, PeriodSelect } from "@/components/portal/PeriodFields";
 import { useAcademicCalendar } from "@/hooks/useAcademicCalendar";
 import { coverageApplies, periodEnd, periodLabel } from "@/lib/academic-calendar";
@@ -273,7 +274,7 @@ export function FinancialManagement() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  {["Student", "Class", "Term / fee type", "Due (₵)", "Paid (₵)", "Due date", "Status", ""].map(
+                  {["Student", "Class", "Term / fee type", "Due", "Paid", "Due date", "Status", ""].map(
                     (h) => (
                       <th key={h} className="px-3 py-2 font-semibold">
                         {h}
@@ -615,6 +616,7 @@ function RecordTable({
   empty: string;
   onDelete: (id: string) => void | Promise<unknown>;
 }) {
+  const page = usePaged(rows, 25);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -635,7 +637,7 @@ function RecordTable({
               </td>
             </tr>
           ) : (
-            rows.map((r) => (
+            page.items.map((r) => (
               <tr key={r.id} className="border-b border-border/60">
                 {r.cells.map((c, i) => (
                   <td key={i} className="px-3 py-2">
@@ -657,6 +659,7 @@ function RecordTable({
           )}
         </tbody>
       </table>
+      <Pager {...page} />
     </div>
   );
 }

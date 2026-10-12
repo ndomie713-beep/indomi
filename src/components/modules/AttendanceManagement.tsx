@@ -1,3 +1,4 @@
+import { Pager, usePaged } from "@/components/portal/Paged";
 import { PeriodDateInput } from "@/components/portal/PeriodFields";
 import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
@@ -185,6 +186,8 @@ export function AttendanceManagement() {
     URL.revokeObjectURL(url);
   };
 
+  const historyPage = usePaged(history, 25);
+
   if (loading) {
     return (
       <div className="surface flex items-center gap-2 p-6 text-sm text-muted-foreground">
@@ -354,7 +357,7 @@ export function AttendanceManagement() {
               </tr>
             </thead>
             <tbody>
-              {history.map((h) => (
+              {historyPage.items.map((h) => (
                 <tr key={`${h.date}-${h.className}`} className="border-b border-border/60">
                   <td className="p-3">{h.date}</td>
                   <td className="p-3 font-medium">{h.className}</td>
@@ -374,6 +377,7 @@ export function AttendanceManagement() {
               )}
             </tbody>
           </table>
+          <div className="px-4 pb-3"><Pager {...historyPage} /></div>
         </div>
       </TabsContent>
     </Tabs>
