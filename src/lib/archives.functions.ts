@@ -1,7 +1,16 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertSuperAdmin, logAudit } from "@/lib/admin.server";
+import { getRoles, logAudit } from "@/lib/admin.server";
+import { resolveProvisionedSchool } from "@/lib/school.server";
+import {
+  allowedStates,
+  canExport,
+  parseAccessRules,
+  parseExportControls,
+  watermarkText,
+  type RecordState,
+} from "@/lib/data-access";
 import { loadCalendar } from "@/lib/academic-calendar.server";
 import { defaultCalendar } from "@/lib/academic-calendar";
 import {
@@ -32,12 +41,42 @@ async function scanAll(make: () => any): Promise<{ rows: Record<string, unknown>
 const MAX_PAGE_SIZE = 200;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-async function retentionRules(supabase: any) {
-  const { data } = await supabase
+/** Caller's roles, school and the Data Access rules in force for that school. */
+async function accessContext(supabase: any, userId: string) {
+  const school = await resolveProvisionedSchool(supabase);
+  const roles = await getRoles(supabase, userId);
+  let rules: any[] = [];
+  let exportPayload: Record<string, unknown> | null = null;
+  if (school) {
+    const today = new Date().toISOString().slice(0, 10);
+    const [r, e] = await Promise.all([
+      supabase.from("finance_rules").select("name, active, conditions").eq("school_id", school.id).eq("rule_key", "record-access-rules").eq("active", true),
+      supabase.from("finance_config_sections").select("payload, effective_from").eq("school_id", school.id).eq("section_key", "export-controls").eq("status", "active").order("version", { ascending: false }),
+    ]);
+    rules = r.data ?? [];
+    exportPayload = ((e.data ?? []).find((x: any) => !x.effective_from || x.effective_from <= today)?.payload ?? null) as any;
+  }
+  const grants = parseAccessRules(rules);
+  return {
+    school,
+    roles,
+    states: (source: string) => allowedStates(roles, grants, source),
+    exportControls: parseExportControls(exportPayload),
+  };
+}
+
+function assertAnyAccess(ctx: Awaited<ReturnType<typeof accessContext>>) {
+  if (!ARCHIVE_SOURCES.some((s) => ctx.states(s.key).size > 0))
+    throw new Error("Forbidden: no Data Access rule grants you archive records.");
+}
+
+async function retentionRules(supabase: any, schoolId?: string) {
+  let q = supabase
     .from("finance_rules")
     .select("name, active, conditions, actions, priority")
-    .eq("rule_key", "retention-policies")
-    .order("priority");
+    .eq("rule_key", "retention-policies");
+  if (schoolId) q = q.eq("school_id", schoolId);
+  const { data } = await q.order("priority");
   return (data ?? []) as Parameters<typeof retentionFor>[1];
 }
 
@@ -46,12 +85,14 @@ export const getArchiveSummary = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase } = context;
-    await assertSuperAdmin(supabase, context.userId);
+    const access = await accessContext(supabase, context.userId);
+    assertAnyAccess(access);
     const cal = (await loadCalendar(supabase)) ?? defaultCalendar();
-    const rules = await retentionRules(supabase);
+    const rules = await retentionRules(supabase, access.school?.id);
 
     const sources = await Promise.all(
-      ARCHIVE_SOURCES.map(async (s) => {
+      ARCHIVE_SOURCES.filter((s) => access.states(s.key).size > 0).map(async (s) => {
+        const visible = access.states(s.key);
         const { rows: data, error } = await scanAll(() =>
           (supabase as any).from(s.table).select(s.dateColumn).order(s.dateColumn, { ascending: false }),
         );
@@ -61,14 +102,16 @@ export const getArchiveSummary = createServerFn({ method: "GET" })
         for (const r of data) {
           const d = r[s.dateColumn] as string | null;
           if (!d) continue;
-          counts[archiveStateOf(d, cal, retention.years)] += 1;
+          const st = archiveStateOf(d, cal, retention.years);
+          if (!visible.has(st)) continue;
+          counts[st] += 1;
           years.add(academicYearOf(d, cal));
         }
         return {
           key: s.key,
           label: s.label,
           module: s.module,
-          total: data.length,
+          total: counts.current + counts.archived + counts["disposal-due"],
           counts,
           years: [...years].sort().reverse(),
           retention,
@@ -76,7 +119,12 @@ export const getArchiveSummary = createServerFn({ method: "GET" })
         };
       }),
     );
-    return { calendar: cal, sources };
+    return {
+      calendar: cal,
+      sources,
+      schoolName: access.school?.name ?? "",
+      canExport: canExport(access.roles, access.exportControls),
+    };
   });
 
 /** Date range [from, to] an academic-year label covers, from the calendar's year start month. */
