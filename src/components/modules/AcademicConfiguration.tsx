@@ -13,7 +13,11 @@ import { getConfiguration, getSchoolAcademicSettings, saveAcademicSettings } fro
 import { GRADING_SYSTEMS, MONTHS } from "@/lib/config";
 import { invalidateAcademicRules } from "@/hooks/useAcademicRules";
 import {
+  ASSESSMENT_CATEGORIES,
+  CATEGORY_LABEL,
+  DEFAULT_ASSESSMENT_TYPES,
   DEFAULT_GRADE_BANDS,
+  assessmentWeights,
   RULE_SECTIONS,
   SECTION_LABEL,
   missingDefaults,
@@ -92,6 +96,7 @@ export function AcademicConfiguration() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="calendar">Academic calendar</TabsTrigger>
           <TabsTrigger value="grading">Grading</TabsTrigger>
+          <TabsTrigger value="types">Assessment types</TabsTrigger>
           {RULE_SECTIONS.map((k) => <TabsTrigger key={k} value={k}>{SECTION_LABEL[k].title}</TabsTrigger>)}
         </TabsList>
 
@@ -135,6 +140,40 @@ export function AcademicConfiguration() {
                   <Button variant="outline" onClick={() => setRules({ ...s.rules, gradeBands: [...s.rules.gradeBands, { min: 0, grade: "", level: "" }] })}><Plus className="size-4" /> Add band</Button>
                   <Button variant="outline" onClick={() => setRules({ ...s.rules, gradeBands: DEFAULT_GRADE_BANDS.map((b) => ({ ...b })) })}><RotateCcw className="size-4" /> Restore default bands</Button>
                 </div>
+              </div>
+              <SaveBar busy={busy} onSave={onSave} />
+            </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="types" className="mt-6 space-y-4">
+          {!s ? <Spinner /> : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Types offered in Assessment. Class work types share the class work weight ({assessmentWeights(s.rules).classWeight}%) and exam types
+                the exam weight ({assessmentWeights(s.rules).examWeight}%) on Termly Reports — set the weights under Assessment rules.
+                Switch a type off to stop new entries while keeping its past records weighted.
+              </p>
+              <div className="space-y-2">
+                {s.rules.assessmentTypes.map((t, i) => {
+                  const put = (patch: Partial<typeof t>) =>
+                    setRules({ ...s.rules, assessmentTypes: s.rules.assessmentTypes.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+                  return (
+                    <div key={i} className="grid items-center gap-2 sm:grid-cols-[2fr_1fr_auto_auto]">
+                      <Input aria-label="Type name" value={t.name} onChange={(e) => put({ name: e.target.value })} />
+                      <Select value={t.category} onValueChange={(v) => put({ category: v as typeof t.category })}>
+                        <SelectTrigger aria-label="Counts as"><SelectValue /></SelectTrigger>
+                        <SelectContent>{ASSESSMENT_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{CATEGORY_LABEL[c]}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <label className="flex items-center gap-2 text-sm"><Switch checked={t.active} onCheckedChange={(v) => put({ active: v })} /> Active</label>
+                      <Button variant="ghost" size="icon" aria-label={`Delete ${t.name}`} onClick={() => setRules({ ...s.rules, assessmentTypes: s.rules.assessmentTypes.filter((_, j) => j !== i) })}><Trash2 className="size-4" /></Button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setRules({ ...s.rules, assessmentTypes: [...s.rules.assessmentTypes, { name: "", category: "class", active: true }] })}><Plus className="size-4" /> Add type</Button>
+                <Button variant="outline" onClick={() => setRules({ ...s.rules, assessmentTypes: DEFAULT_ASSESSMENT_TYPES.map((t) => ({ ...t })) })}><RotateCcw className="size-4" /> Restore defaults</Button>
               </div>
               <SaveBar busy={busy} onSave={onSave} />
             </>
