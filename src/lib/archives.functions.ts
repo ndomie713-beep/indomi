@@ -137,111 +137,131 @@ function yearRange(year: string, cal: ReturnType<typeof defaultCalendar>): [stri
   return [from, end];
 }
 
-/** Records of one source, filtered by dates, academic year, term/semester and state, one page at a time. */
+const recordsInput = z.object({
+  source: z.string().min(1).max(40),
+  year: z.string().max(20).optional(),
+  period: z.string().max(60).optional(),
+  state: z.enum(["all", "current", "archived", "disposal-due"]).default("all"),
+  dateFrom: z.string().regex(DATE_RE).optional(),
+  dateTo: z.string().regex(DATE_RE).optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(10).max(MAX_PAGE_SIZE).default(50),
+});
+type RecordsInput = z.infer<typeof recordsInput>;
+
+/** Shared read used by viewing and exporting: filters + Data Access states. */
+async function loadRecords(supabase: any, access: Awaited<ReturnType<typeof accessContext>>, data: RecordsInput, everything: boolean) {
+  const source = getArchiveSource(data.source);
+  if (!source) throw new Error("Unknown archive source.");
+  const visible = access.states(source.key);
+  if (visible.size === 0) throw new Error(`Forbidden: no Data Access rule grants you ${source.label} records.`);
+  if (data.state !== "all" && !visible.has(data.state)) throw new Error("Forbidden: that record state is not visible to you.");
+  const cal = (await loadCalendar(supabase)) ?? defaultCalendar();
+  const retention = retentionFor(source, await retentionRules(supabase, access.school?.id));
+
+  let from = data.dateFrom ?? null;
+  let to = data.dateTo ?? null;
+  const period = data.period ? cal.periods.find((p) => p.name === data.period) : null;
+  if (period) {
+    from = from && from > period.start ? from : period.start;
+    to = to && to < period.end ? to : period.end;
+  }
+  if (data.year) {
+    const yr = yearRange(data.year, cal);
+    if (yr) {
+      from = from && from > yr[0] ? from : yr[0];
+      to = to && to < yr[1] ? to : yr[1];
+    }
+  }
+  if (from && to && from > to) throw new Error("The From date must be on or before the To date.");
+
+  const toRecord = (r: Record<string, unknown>) => {
+    const date = String(r[source.dateColumn] ?? "").slice(0, 10);
+    const cells: Record<string, string | number | null> = {};
+    for (const c of source.columns) {
+      const v = valueAt(r, c.path);
+      cells[c.key] = v === null || v === undefined ? null : typeof v === "number" ? v : String(v);
+    }
+    return { id: String(r["id"] ?? ""), cells, date, year: academicYearOf(date, cal), state: archiveStateOf(date, cal, retention.years) as RecordState };
+  };
+
+  const base = (withCount = false) => {
+    let q = supabase.from(source.table).select(source.select, withCount ? { count: "exact" } : undefined);
+    if (from) q = q.gte(source.dateColumn, from);
+    if (to) q = q.lte(source.dateColumn, `${to}T23:59:59.999Z`);
+    return q.order(source.dateColumn, { ascending: false });
+  };
+
+  const unrestricted = visible.size === 3 && data.state === "all";
+  let records: ReturnType<typeof toRecord>[];
+  let total: number;
+  let truncated = false;
+  if (unrestricted && !everything) {
+    const offset = (data.page - 1) * data.pageSize;
+    const { data: rows, error, count } = await base(true).range(offset, offset + data.pageSize - 1);
+    if (error) throw new Error(error.message);
+    records = ((rows ?? []) as Record<string, unknown>[]).map(toRecord).filter((r) => r.date);
+    total = count ?? records.length;
+  } else {
+    // State is derived per record (and restricted by Data Access), so filter in memory.
+    const { rows, capped, error } = await scanAll(() => base());
+    if (error) throw new Error(error);
+    const filtered = rows
+      .map(toRecord)
+      .filter((r) => r.date && visible.has(r.state))
+      .filter((r) => data.state === "all" || r.state === data.state);
+    total = filtered.length;
+    truncated = capped;
+    records = everything ? filtered : filtered.slice((data.page - 1) * data.pageSize, data.page * data.pageSize);
+  }
+  return { source, retention, records, total, truncated };
+}
+
+/** Records of one source, one page at a time, limited to what Data Access allows. */
 export const getArchiveRecords = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        source: z.string().min(1).max(40),
-        year: z.string().max(20).optional(),
-        period: z.string().max(60).optional(),
-        state: z.enum(["all", "current", "archived", "disposal-due"]).default("all"),
-        dateFrom: z.string().regex(DATE_RE).optional(),
-        dateTo: z.string().regex(DATE_RE).optional(),
-        page: z.number().int().min(1).default(1),
-        pageSize: z.number().int().min(10).max(MAX_PAGE_SIZE).default(50),
-      })
-      .parse(d),
-  )
+  .inputValidator((d: unknown) => recordsInput.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-    await assertSuperAdmin(supabase, context.userId);
-    const source = getArchiveSource(data.source);
-    if (!source) throw new Error("Unknown archive source.");
-    const cal = (await loadCalendar(supabase)) ?? defaultCalendar();
-    const retention = retentionFor(source, await retentionRules(supabase));
-
-    // Resolve every date-ish filter to one [from, to] range applied in the query.
-    let from = data.dateFrom ?? null;
-    let to = data.dateTo ?? null;
-    const period = data.period ? cal.periods.find((p) => p.name === data.period) : null;
-    if (period) {
-      from = from && from > period.start ? from : period.start;
-      to = to && to < period.end ? to : period.end;
-    }
-    if (data.year) {
-      const yr = yearRange(data.year, cal);
-      if (yr) {
-        from = from && from > yr[0] ? from : yr[0];
-        to = to && to < yr[1] ? to : yr[1];
-      }
-    }
-
-    const toRecord = (r: Record<string, unknown>) => {
-      const date = String(r[source.dateColumn] ?? "").slice(0, 10);
-      // Flatten to plain cell values (serializable, and only the registry's columns leave the server).
-      const cells: Record<string, string | number | null> = {};
-      for (const c of source.columns) {
-        const v = valueAt(r, c.path);
-        cells[c.key] = v === null || v === undefined ? null : typeof v === "number" ? v : String(v);
-      }
-      return {
-        id: String(r["id"] ?? ""),
-        cells,
-        date,
-        year: academicYearOf(date, cal),
-        state: archiveStateOf(date, cal, retention.years),
-      };
-    };
-
-    if (from && to && from > to) throw new Error("The From date must be on or before the To date.");
-
-    const base = (withCount = false) => {
-      let q = (supabase as any)
-        .from(source.table)
-        .select(source.select, withCount ? { count: "exact" } : undefined);
-      if (from) q = q.gte(source.dateColumn, from);
-      if (to) q = q.lte(source.dateColumn, `${to}T23:59:59.999Z`);
-      return q.order(source.dateColumn, { ascending: false });
-    };
-
-    let records: ReturnType<typeof toRecord>[];
-    let total: number;
-    let truncated = false;
-
-    if (data.state === "all") {
-      // True server-side paging: the database returns exactly this page.
-      const offset = (data.page - 1) * data.pageSize;
-      const { data: rows, error, count } = await base(true).range(offset, offset + data.pageSize - 1);
-      if (error) throw new Error(error.message);
-      records = ((rows ?? []) as Record<string, unknown>[]).map(toRecord).filter((r) => r.date);
-      total = count ?? records.length;
-    } else {
-      // State is derived per record, so filter in memory over the date range, then slice the page.
-      // Scan the whole range in chunks so older records beyond the newest batch are included.
-      const { rows, capped, error } = await scanAll(() => base());
-      if (error) throw new Error(error);
-      const filtered = rows
-        .map(toRecord)
-        .filter((r) => r.date)
-        .filter((r) => r.state === data.state);
-      total = filtered.length;
-      truncated = capped;
-      records = filtered.slice((data.page - 1) * data.pageSize, data.page * data.pageSize);
-    }
-
+    const access = await accessContext(supabase, context.userId);
+    const r = await loadRecords(supabase, access, data, false);
     await logAudit(supabase, context.userId, {
       action: "archive_viewed",
-      description: `Viewed ${source.label} archive (page ${data.page}, ${records.length} of ${total} records)`,
+      description: `Viewed ${r.source.label} archive (page ${data.page}, ${r.records.length} of ${r.total} records)`,
     });
     return {
-      retention,
-      truncated,
-      records,
-      total,
+      retention: r.retention,
+      truncated: r.truncated,
+      records: r.records,
+      total: r.total,
       page: data.page,
       pageSize: data.pageSize,
-      pageCount: Math.max(1, Math.ceil(total / data.pageSize)),
+      pageCount: Math.max(1, Math.ceil(r.total / data.pageSize)),
+    };
+  });
+
+/** Export: authorized by Export Controls on the server, audited, optionally watermarked. */
+export const exportArchiveRecords = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => recordsInput.parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const access = await accessContext(supabase, context.userId);
+    if (!canExport(access.roles, access.exportControls))
+      throw new Error("Forbidden: Export Controls do not allow your role to export records.");
+    const r = await loadRecords(supabase, access, data, true);
+    const { data: me } = await supabase.from("profiles").select("email").eq("id", context.userId).maybeSingle();
+    const watermark = access.exportControls.watermark
+      ? watermarkText(access.school?.name ?? "", (me as any)?.email ?? "", new Date().toISOString())
+      : null;
+    await logAudit(supabase, context.userId, {
+      action: "archive_exported",
+      description: `Exported ${r.records.length} ${r.source.label} archive records`,
+      details: { source: r.source.key, state: data.state, count: r.records.length, watermark: !!watermark },
+    });
+    return {
+      watermark,
+      truncated: r.truncated,
+      rows: r.records.map((x) => ({ date: x.date, year: x.year, state: x.state, cells: x.cells })),
     };
   });
