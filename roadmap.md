@@ -33,3 +33,10 @@
 - [x] Shared default brand colours, clearer load errors, calendar tests
 - [ ] Tests for finance-config rules and archive state logic
 - [x] One shared provisioned-school resolver for overview, finance and archives (school name on every portal page)
+
+## Academic wiring (Oct 2026)
+- [x] Assessment types in Academic Configuration, used by Assessment and Termly Reports
+- [x] Teaching assignments scope Assessment (classes, subjects, students, server checks)
+- [x] "Next term begins" from the following calendar period
+- [x] Parent dashboard: real average score and attendance %, per-period summaries, paged lists
+- [x] Shared pagination on Assessment, Admissions, Attendance history, Finance tables

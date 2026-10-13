@@ -24,3 +24,6 @@
 - Versioned configuration areas in src/lib/finance-config.ts carry an owner page (areasOwnedBy); Financial and Reporting & Records render the same workspace filtered by owner — one storage, lifecycle and audit path, no duplicate editors.
 - Archive viewing/export authorization is evaluated only in src/lib/data-access.ts (pure) and enforced server-side in archives.functions.ts; deny by default except Super Admin — one rule engine, UI only mirrors it.
 - The provisioned school is resolved only via resolveProvisionedSchool in src/lib/school.server.ts — modules never pick their own school row.
+- Assessment types (name + class/exam category) live in the academic rules and are edited only in Academic Configuration; Assessment validates against them and Termly Reports weights by category — no hardcoded type lists.
+- Teacher subject/class scope comes only from teaching_assignments via loadTeachingScope in src/lib/teaching.server.ts (distinct from class_teachers); modules filter reads and assert writes with it.
+- Learner attendance/score summaries are computed only by src/lib/student-summary.ts, grouped by academic-calendar periods; long lists use the shared usePaged/Pager in src/components/portal/Paged.tsx.
