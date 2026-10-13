@@ -180,7 +180,7 @@ export function FinancialManagement() {
             }
           />
           <RecordTable
-            headers={["Date", "Description", "Category", `Amount (₵)`, "Status", ""]}
+            headers={["Date", "Description", "Category", `Amount`, "Status", ""]}
             empty="No income recorded yet."
             rows={data.income.map((r) => ({
               id: r.id,
@@ -225,7 +225,7 @@ export function FinancialManagement() {
             }
           />
           <RecordTable
-            headers={["Date", "Description", "Category", "Amount (₵)", "Status", ""]}
+            headers={["Date", "Description", "Category", "Amount", "Status", ""]}
             empty="No expenses recorded yet."
             rows={data.expenses.map((r) => ({
               id: r.id,
@@ -413,10 +413,10 @@ export function FinancialManagement() {
               "Employee ID",
               "Name",
               "Position",
-              "Basic (₵)",
-              "Allowances (₵)",
-              "Deductions (₵)",
-              "Net (₵)",
+              "Basic",
+              "Allowances",
+              "Deductions",
+              "Net",
               "Status",
               "",
             ]}
@@ -724,7 +724,7 @@ function EntryDialog({
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Amount (₵)">
+          <Field label="Amount">
             <Input
               type="number"
               step="0.01"
@@ -850,7 +850,7 @@ function FeeDialog({
               </SelectContent>
             </Select>
           </Field>
-          <Field label="Amount (₵)">
+          <Field label="Amount">
             <Input
               type="number"
               step="0.01"
@@ -994,7 +994,7 @@ function PayrollDialog({
                 <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} />
               </div>
             </Field>
-            <Field label="Basic salary (₵)">
+            <Field label="Basic salary">
               <Input
                 type="number"
                 step="0.01"
@@ -1002,7 +1002,7 @@ function PayrollDialog({
                 onChange={(e) => setBasicSalary(e.target.value)}
               />
             </Field>
-            <Field label="Allowances (₵)">
+            <Field label="Allowances">
               <Input
                 type="number"
                 step="0.01"
@@ -1010,7 +1010,7 @@ function PayrollDialog({
                 onChange={(e) => setAllowances(e.target.value)}
               />
             </Field>
-            <Field label="Deductions (₵)">
+            <Field label="Deductions">
               <Input
                 type="number"
                 step="0.01"
