@@ -88,10 +88,15 @@ export const runInitialSetup = createServerFn({ method: "POST" })
     return { created };
   });
 
+/** Minimum gap before a repeat reset request for the same email is recorded. */
+const RESET_REQUEST_COOLDOWN_MS = 15 * 60 * 1000;
+
 /**
  * Public: raise a password reset request. Only an admin can actually reset the
- * password. Repeat requests update the existing pending row instead of piling
- * up duplicates, and the response never reveals whether the account exists.
+ * password. Hardened against abuse: requests are only recorded for emails that
+ * match an existing account, repeats within the cooldown window are dropped
+ * instead of modifying the pending row, and the response is always identical
+ * so it never reveals whether the account exists.
  */
 export const requestPasswordReset = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => resetRequestSchema.parse(d))
@@ -100,14 +105,27 @@ export const requestPasswordReset = createServerFn({ method: "POST" })
     const email = data.email.trim().toLowerCase();
     const note = data.note?.trim() || null;
 
+    // Only record requests for real accounts; the response stays generic either way.
+    const { data: account } = await supabaseAdmin
+      .from("profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+    if (!account) return { ok: true };
+
     const { data: existing } = await supabaseAdmin
       .from("password_reset_requests")
-      .select("id")
+      .select("id, created_at")
       .eq("email", email)
       .eq("status", "pending")
       .maybeSingle();
 
     if (existing) {
+      // Throttle: a fresh pending request already covers this account; repeats
+      // within the cooldown must not modify it (prevents queue flooding and
+      // note tampering by unauthenticated callers).
+      const age = Date.now() - new Date(existing.created_at).getTime();
+      if (age < RESET_REQUEST_COOLDOWN_MS) return { ok: true };
       await supabaseAdmin
         .from("password_reset_requests")
         .update({ note, created_at: new Date().toISOString() })
