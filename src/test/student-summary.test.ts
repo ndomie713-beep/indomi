@@ -25,7 +25,7 @@ describe("student summaries", () => {
     );
     expect(r.overall.rate).toBe(75);
     expect(r.periods.map((p) => p.period)).toEqual(["Term 2", "Term 1"]);
-    expect(r.periods[1].rate).toBe(67);
+    expect(r.periods[1]?.rate).toBe(67);
     expect(isAttended("PRESENT")).toBe(true);
   });
 
@@ -35,7 +35,7 @@ describe("student summaries", () => {
       { term: "Term 1", subject: "English", score: 30, outOf: 50 },
     ]);
     expect(r.average).toBe(70);
-    expect(r.terms[0].subjects).toHaveLength(2);
+    expect(r.terms[0]?.subjects).toHaveLength(2);
   });
 });
 
@@ -46,7 +46,7 @@ describe("assessment types", () => {
     expect(categoryOf(rules, "exam")).toBe("exam");
     expect(categoryOf(rules, "Homework")).toBe("class");
     const legacy = { ...defaultRules() } as Record<string, unknown>;
-    delete legacy.assessmentTypes;
+    delete legacy["assessmentTypes"];
     expect(parseRules(legacy).assessmentTypes.length).toBeGreaterThan(0);
   });
 });
